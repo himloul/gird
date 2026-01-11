@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -136,6 +137,8 @@ fun FencesScreen(onBack: () -> Unit) {
 
 fun GeofenceItem(fence: Geofence, onDelete: () -> Unit) {
 
+    val context = LocalContext.current
+
     Card(
 
         modifier = Modifier.fillMaxWidth(),
@@ -143,8 +146,6 @@ fun GeofenceItem(fence: Geofence, onDelete: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
 
     ) {
-
-
 
         ListItem(
 
@@ -194,9 +195,23 @@ fun GeofenceItem(fence: Geofence, onDelete: () -> Unit) {
 
             trailingContent = {
 
-                IconButton(onClick = onDelete) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
 
-                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                    Switch(
+
+                        checked = fence.isActive,
+
+                        onCheckedChange = { GeofenceRepository.toggleGeofence(context, fence.id, it) },
+
+                        modifier = Modifier.scale(0.8f)
+
+                    )
+
+                    IconButton(onClick = onDelete) {
+
+                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+
+                    }
 
                 }
 
@@ -207,3 +222,5 @@ fun GeofenceItem(fence: Geofence, onDelete: () -> Unit) {
     }
 
 }
+
+

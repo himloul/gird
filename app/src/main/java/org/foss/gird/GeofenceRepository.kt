@@ -157,6 +157,14 @@ object GeofenceRepository {
         _geofences.remove(geofence)
         save(context)
     }
+
+    fun toggleGeofence(context: Context, id: String, isActive: Boolean) {
+        val index = _geofences.indexOfFirst { it.id == id }
+        if (index != -1) {
+            _geofences[index] = _geofences[index].copy(isActive = isActive)
+            save(context)
+        }
+    }
     
     fun updateGeofenceState(id: String, newState: GeofenceState) {
         // State changes happen frequently in background, we might not want to write to disk 

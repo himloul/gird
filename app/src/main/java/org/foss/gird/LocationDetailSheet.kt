@@ -29,6 +29,7 @@ fun LocationDetailSheet(
     var name by remember { mutableStateOf(existingGeofence?.name ?: "") }
     var radius by remember { mutableFloatStateOf(existingGeofence?.radiusInMeters ?: 100f) }
     var selectedColor by remember { mutableStateOf(existingGeofence?.color ?: GeofenceColor.GREEN) }
+    var isActive by remember { mutableStateOf(existingGeofence?.isActive ?: true) }
 
     Column(
         modifier = Modifier
@@ -37,11 +38,22 @@ fun LocationDetailSheet(
             .navigationBarsPadding() // Respect bottom nav bar/gestures
     ) {
         // Header
-        Text(
-            text = if (existingGeofence != null) "Edit Geofence" else "Add Geofence",
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.primary
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (existingGeofence != null) "Edit Geofence" else "Add Geofence",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            
+            Switch(
+                checked = isActive,
+                onCheckedChange = { isActive = it }
+            )
+        }
         
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -157,16 +169,21 @@ fun LocationDetailSheet(
                 }
                 Button(
                     onClick = {
-                        val finalName = if (name.isBlank()) "Geofence ${UUID.randomUUID().toString().take(4)}" else name
-                        val newFence = existingGeofence?.copy(name = finalName, radiusInMeters = radius, color = selectedColor) 
-                            ?: Geofence(
-                                id = UUID.randomUUID().toString(),
-                                name = finalName,
-                                latitude = geoPoint.latitude,
-                                longitude = geoPoint.longitude,
-                                radiusInMeters = radius,
-                                color = selectedColor
-                            )
+                        val finalName = if (name.isBlank()) "Fence ${UUID.randomUUID().toString().take(4)}" else name
+                        val newFence = existingGeofence?.copy(
+                            name = finalName, 
+                            radiusInMeters = radius, 
+                            color = selectedColor,
+                            isActive = isActive
+                        ) ?: Geofence(
+                            id = UUID.randomUUID().toString(),
+                            name = finalName,
+                            latitude = geoPoint.latitude,
+                            longitude = geoPoint.longitude,
+                            radiusInMeters = radius,
+                            color = selectedColor,
+                            isActive = isActive
+                        )
                         onSave(newFence)
                     },
                     modifier = Modifier.weight(1f)

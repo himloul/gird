@@ -49,12 +49,6 @@ fun MapViewContainer(
 ) {
     val context = LocalContext.current
     
-    // Natural Palette (Muted if service is off)
-    val colorFilter = if (isMonitoringActive) 1.0f else 0.4f
-    val forestGreen = androidx.compose.ui.graphics.Color(0xFF2E7D32).copy(alpha = colorFilter).toArgb()
-    val blueColor = androidx.compose.ui.graphics.Color(0xFF1976D2).copy(alpha = colorFilter).toArgb()
-    val redColor = androidx.compose.ui.graphics.Color(0xFFD32F2F).copy(alpha = colorFilter).toArgb()
-    
     val draftColor = MaterialTheme.colorScheme.tertiary.toArgb()
     
     // Programmatic Circular Marker Drawer
@@ -188,10 +182,13 @@ fun MapViewContainer(
             geofences.forEach { fence ->
                 val center = GeoPoint(fence.latitude, fence.longitude)
                 
+                // Final color is filtered by both Global Monitoring state AND Individual Fence activity
+                val activeFilter = if (fence.isActive && isMonitoringActive) 1.0f else 0.3f
+                
                 val mColor = when(fence.color) {
-                    GeofenceColor.RED -> redColor
-                    GeofenceColor.BLUE -> blueColor
-                    GeofenceColor.GREEN -> forestGreen
+                    GeofenceColor.RED -> androidx.compose.ui.graphics.Color(0xFFD32F2F).copy(alpha = activeFilter).toArgb()
+                    GeofenceColor.BLUE -> androidx.compose.ui.graphics.Color(0xFF1976D2).copy(alpha = activeFilter).toArgb()
+                    GeofenceColor.GREEN -> androidx.compose.ui.graphics.Color(0xFF2E7D32).copy(alpha = activeFilter).toArgb()
                 }
 
                 // Add marker
@@ -211,9 +208,9 @@ fun MapViewContainer(
                 val circle = Polygon.pointsAsCircle(center, fence.radiusInMeters.toDouble())
                 val polygon = Polygon(view).apply {
                     points = circle
-                    fillColor = Color.argb(if (isMonitoringActive) 45 else 20, Color.red(mColor), Color.green(mColor), Color.blue(mColor))
+                    fillColor = Color.argb(if (fence.isActive && isMonitoringActive) 45 else 15, Color.red(mColor), Color.green(mColor), Color.blue(mColor))
                     strokeColor = mColor
-                    strokeWidth = 3f
+                    strokeWidth = if (fence.isActive) 3f else 1f
                     setOnClickListener { _, _, _ ->
                         onGeofenceClick(fence)
                         true 
