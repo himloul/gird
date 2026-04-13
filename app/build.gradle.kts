@@ -23,6 +23,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -42,6 +43,10 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Exclude unnecessary license files
+            excludes += "**/LICENSE*"
+            excludes += "**/NOTICE*"
+            excludes += "**/META-INF/*.kotlin_module"
         }
     }
 }
@@ -60,8 +65,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     // Icons
-    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
 
     // Osmdroid (OpenStreetMap)
     implementation("org.osmdroid:osmdroid-android:6.1.18")

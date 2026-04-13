@@ -4,6 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -110,20 +114,38 @@ fun MapViewContainer(
             
             overlays.add(compassOverlay)
 
-            addMapListener(object : org.osmdroid.events.MapListener {
-                override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
-                    saveState()
-                    return true
-                }
-                override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
-                    saveState()
-                    return true
-                }
-                private fun saveState() {
-                    val center = mapCenter as GeoPoint
-                    GeofenceRepository.saveMapState(context, center.latitude, center.longitude, zoomLevelDouble)
-                }
-            })
+            // Removed immediate listeners to avoid excessive disk I/O.
+            // Map state saving is now handled via a debounced LaunchedEffect below.
+        }
+    }
+
+    // Debounced Map State Saving
+    // Triggers after 500ms of inactivity to avoid hammering SharedPreferences during scroll/zoom
+    var mapCenter by remember { mutableStateOf(initialCenter) }
+    var mapZoom by remember { mutableDoubleStateOf(initialZoom) }
+
+    LaunchedEffect(mapCenter, mapZoom) {
+        if (mapCenter != initialCenter || mapZoom != initialZoom) {
+            kotlinx.coroutines.delay(500)
+            GeofenceRepository.saveMapState(context, mapCenter.latitude, mapCenter.longitude, mapZoom)
+        }
+    }
+
+    // Update center/zoom from view state
+    DisposableEffect(mapView) {
+        val listener = object : org.osmdroid.events.MapListener {
+            override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+                mapCenter = mapView.mapCenter as GeoPoint
+                return true
+            }
+            override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
+                mapZoom = mapView.zoomLevelDouble
+                return true
+            }
+        }
+        mapView.addMapListener(listener)
+        onDispose {
+            mapView.removeMapListener(listener)
         }
     }
 
@@ -133,7 +155,7 @@ fun MapViewContainer(
             val locationOverlay = mapView.overlays.filterIsInstance<MyLocationNewOverlay>().firstOrNull()
             val myLocation = locationOverlay?.myLocation
             if (myLocation != null) {
-                mapView.controller.setCenter(myLocation)
+                mapView.controller.animateTo(myLocation)
                 mapView.controller.setZoom(16.0)
             } else {
                 Toast.makeText(context, "Searching for GPS signal...", Toast.LENGTH_SHORT).show()

@@ -142,14 +142,14 @@ fun LocationDetailSheet(
         Slider(
             value = radius,
             onValueChange = { radius = it },
-            valueRange = 50f..1000f,
-            steps = 19
+            valueRange = 5f..1000f,
+            steps = 199 // 5m increments: (1000-5)/5 = 199
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("50m", style = MaterialTheme.typography.bodySmall)
+            Text("5m", style = MaterialTheme.typography.bodySmall)
             Text("1km", style = MaterialTheme.typography.bodySmall)
         }
 
