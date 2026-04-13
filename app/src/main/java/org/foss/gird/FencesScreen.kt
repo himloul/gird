@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -53,31 +54,13 @@ fun FencesScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("My Geofences") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                }
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { openAddSheetAtCurrentLocation() },
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                shape = androidx.compose.foundation.shape.CircleShape
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Fence")
-            }
-        }
-    ) { padding ->
+    // We no longer have a local Scaffold. We use the one from MainActivity.
+    // However, the FAB in MainActivity for "fences" needs to trigger openAddSheetAtCurrentLocation.
+    // To keep it simple for now, we'll keep the FAB here but remove the Scaffold/TopBar.
+    
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
-                .padding(padding)
                 .fillMaxSize()
                 .padding(horizontal = 16.dp)
         ) {
@@ -100,19 +83,41 @@ fun FencesScreen(onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(8.dp))
             
             if (geofences.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No geofences saved yet.", color = MaterialTheme.colorScheme.outline)
+                Box(modifier = Modifier.fillMaxSize().padding(bottom = 64.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Default.Layers, 
+                            null, 
+                            modifier = Modifier.size(64.dp), 
+                            tint = MaterialTheme.colorScheme.outlineVariant
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("No geofences saved yet.", color = MaterialTheme.colorScheme.outline)
+                    }
                 }
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp) // Avoid FAB overlap
+                    contentPadding = PaddingValues(bottom = 80.dp) // Avoid overlap with bottom nav
                 ) {
                     items(geofences) { fence ->
                         GeofenceItem(fence, onDelete = { GeofenceRepository.removeGeofence(context, fence) })
                     }
                 }
             }
+        }
+
+        // Add FAB locally for now to handle the local state 'openAddSheetAtCurrentLocation'
+        FloatingActionButton(
+            onClick = { openAddSheetAtCurrentLocation() },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp),
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            shape = androidx.compose.foundation.shape.CircleShape
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "Add Fence")
         }
 
         // Add Sheet

@@ -97,6 +97,22 @@ fun MainScreen() {
     }
 
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { 
+                    Text(when(currentScreen) {
+                        "fences" -> "My Geofences"
+                        "history" -> "Activity Log"
+                        "settings" -> "App Settings"
+                        else -> "Gird"
+                    })
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                )
+            )
+        },
         bottomBar = {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface,
@@ -133,33 +149,46 @@ fun MainScreen() {
             }
         },
         floatingActionButton = {
-            if (currentScreen == "map") {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalAlignment = Alignment.End,
-                    modifier = Modifier.navigationBarsPadding()
-                ) {
-                    FloatingActionButton(
-                        onClick = { isMonitoringActive = !isMonitoringActive },
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                        contentColor = if (isMonitoringActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
+            when (currentScreen) {
+                "map" -> {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalAlignment = Alignment.End,
+                        modifier = Modifier.navigationBarsPadding()
                     ) {
-                        Icon(
-                            if (isMonitoringActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
-                            null
+                        SmallFloatingActionButton(
+                            onClick = { panToMyLocationTrigger++ },
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        ) {
+                            Icon(Icons.Default.MyLocation, contentDescription = "My Location")
+                        }
+
+                        ExtendedFloatingActionButton(
+                            onClick = { isMonitoringActive = !isMonitoringActive },
+                            containerColor = if (isMonitoringActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.errorContainer,
+                            contentColor = if (isMonitoringActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onErrorContainer,
+                            icon = {
+                                Icon(
+                                    if (isMonitoringActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
+                                    null
+                                )
+                            },
+                            text = {
+                                Text(if (isMonitoringActive) "Monitoring On" else "Monitoring Off")
+                            }
                         )
                     }
-
+                }
+                "fences" -> {
+                    // This logic will be moved from FencesScreen.kt later, but for now we handle it here
                     FloatingActionButton(
-                        onClick = { panToMyLocationTrigger++ },
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                        contentColor = MaterialTheme.colorScheme.primary,
-                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
+                        onClick = { /* This is handled inside FencesScreen for now, but should ideally be moved */ },
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        shape = androidx.compose.foundation.shape.CircleShape
                     ) {
-                        Icon(Icons.Default.MyLocation, contentDescription = "My Location")
+                        Icon(Icons.Default.Add, contentDescription = "Add Fence")
                     }
                 }
             }
@@ -175,6 +204,7 @@ fun MainScreen() {
                         MapViewContainer(
                             modifier = Modifier.fillMaxSize(),
                             geofences = geofences,
+                            selectedGeofence = selectedGeofence,
                             selectedPoint = selectedPoint,
                             panToMyLocationTrigger = panToMyLocationTrigger,
                             isMonitoringActive = isMonitoringActive,

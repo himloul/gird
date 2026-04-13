@@ -27,42 +27,42 @@ fun HistoryScreen(onBack: () -> Unit) {
     val history = GeofenceRepository.history
     BackHandler(onBack = onBack)
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Activity Log") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, null)
-                    }
-                },
-                actions = {
-                    if (history.isNotEmpty()) {
-                        IconButton(onClick = { GeofenceRepository.clearHistory(context) }) {
-                            Icon(Icons.Default.ClearAll, contentDescription = "Clear History")
-                        }
-                    }
-                }
-            )
+    if (history.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize().padding(bottom = 64.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    Icons.Default.History, 
+                    null, 
+                    modifier = Modifier.size(64.dp), 
+                    tint = MaterialTheme.colorScheme.outlineVariant
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("No activity recorded yet.", color = MaterialTheme.colorScheme.outline)
+            }
         }
-    ) { padding ->
-        if (history.isEmpty()) {
-            Box(modifier = Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.History, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("No activity recorded yet.", color = MaterialTheme.colorScheme.outline)
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = { GeofenceRepository.clearHistory(context) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Default.ClearAll, null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Clear History")
+                    }
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.padding(padding).fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(history) { event ->
-                    HistoryItem(event)
-                }
+            items(history) { event ->
+                HistoryItem(event)
             }
         }
     }

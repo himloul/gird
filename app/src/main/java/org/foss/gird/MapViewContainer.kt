@@ -45,6 +45,7 @@ fun MapViewContainer(
     onMapClick: (GeoPoint) -> Unit = {},
     onGeofenceClick: (Geofence) -> Unit = {},
     geofences: List<Geofence> = emptyList(),
+    selectedGeofence: Geofence? = null,
     selectedPoint: GeoPoint? = null,
     panToMyLocationTrigger: Int = 0,
     isMonitoringActive: Boolean = false,
@@ -226,13 +227,16 @@ fun MapViewContainer(
                 }
                 view.overlays.add(marker)
 
+                // Highlight selected geofence
+                val isSelected = fence.id == selectedGeofence?.id
+
                 // Add circle
                 val circle = Polygon.pointsAsCircle(center, fence.radiusInMeters.toDouble())
                 val polygon = Polygon(view).apply {
                     points = circle
-                    fillColor = Color.argb(if (fence.isActive && isMonitoringActive) 45 else 15, Color.red(mColor), Color.green(mColor), Color.blue(mColor))
-                    strokeColor = mColor
-                    strokeWidth = if (fence.isActive) 3f else 1f
+                    fillColor = Color.argb(if (isSelected) 80 else if (fence.isActive && isMonitoringActive) 45 else 15, Color.red(mColor), Color.green(mColor), Color.blue(mColor))
+                    strokeColor = if (isSelected) Color.WHITE else mColor
+                    strokeWidth = if (isSelected) 8f else if (fence.isActive) 3f else 1f
                     setOnClickListener { _, _, _ ->
                         onGeofenceClick(fence)
                         true 
