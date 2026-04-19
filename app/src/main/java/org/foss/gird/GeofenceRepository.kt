@@ -265,6 +265,49 @@ object GeofenceRepository {
         }
     }
 
+    fun exportDataToJson(): String {
+        val root = JSONObject()
+        val fenceSnapshot = synchronized(lock) { _geofences.toList() }
+        val historySnapshot = synchronized(lock) { _history.toList() }
+        val taskSnapshot = synchronized(lock) { _tasks.toList() }
+
+        val fenceArray = JSONArray()
+        fenceSnapshot.forEach { fence ->
+            fenceArray.put(JSONObject().apply {
+                put("id", fence.id)
+                put("name", fence.name)
+                put("latitude", fence.latitude)
+                put("longitude", fence.longitude)
+                put("radius", fence.radiusInMeters)
+            })
+        }
+
+        val historyArray = JSONArray()
+        historySnapshot.forEach { event ->
+            historyArray.put(JSONObject().apply {
+                put("fence", event.fenceName)
+                put("type", event.eventType.name)
+                put("timestamp", event.timestamp)
+            })
+        }
+
+        val taskArray = JSONArray()
+        taskSnapshot.forEach { task ->
+            taskArray.put(JSONObject().apply {
+                put("content", task.content)
+                put("isCompleted", task.isCompleted)
+                put("completedAt", task.completedAt)
+            })
+        }
+
+        root.put("geofences", fenceArray)
+        root.put("history", historyArray)
+        root.put("tasks", taskArray)
+        root.put("exported_at", System.currentTimeMillis())
+
+        return root.toString(4) // Indented for readability
+    }
+
     fun addGeofence(context: Context, geofence: Geofence) {
         synchronized(lock) {
             _geofences.add(geofence)

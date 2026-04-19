@@ -48,18 +48,19 @@ fun MapViewContainer(
 ) {
     val context = LocalContext.current
     val draftColor = MaterialTheme.colorScheme.tertiary.toArgb()
+    val tasks = GeofenceRepository.tasks
     
-    // Programmatic Circular Marker Drawer
-    fun createCircleMarker(color: Int, sizeDp: Int = 16): BitmapDrawable {
+    // Programmatic Circular Marker Drawer with Task Badge
+    fun createCircleMarker(color: Int, sizeDp: Int = 20, taskCount: Int = 0): BitmapDrawable {
         val density = context.resources.displayMetrics.density
         val size = (sizeDp * density).toInt()
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val center = size / 2f
-        val radius = size / 2.5f
+        val radius = size / 2.2f
 
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = Color.WHITE
+            this.color = android.graphics.Color.WHITE
             this.style = Paint.Style.STROKE
             this.strokeWidth = 2f * density
         }
@@ -71,6 +72,20 @@ fun MapViewContainer(
 
         canvas.drawCircle(center, center, radius, fillPaint)
         canvas.drawCircle(center, center, radius, strokePaint)
+
+        if (taskCount > 0) {
+            val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.color = android.graphics.Color.WHITE
+                this.textAlign = Paint.Align.CENTER
+                this.textSize = 10f * density
+                this.typeface = android.graphics.Typeface.DEFAULT_BOLD
+            }
+            val textBounds = android.graphics.Rect()
+            val text = taskCount.toString()
+            badgePaint.getTextBounds(text, 0, text.length, textBounds)
+            canvas.drawText(text, center, center + (textBounds.height() / 2f), badgePaint)
+        }
+
         return BitmapDrawable(context.resources, bitmap)
     }
 
@@ -82,7 +97,6 @@ fun MapViewContainer(
 
     val mapView = remember {
         MapView(context).apply {
-            // Carto Voyager - Clean, Modern, and Clear Names
             setTileSource(object : OnlineTileSourceBase(
                 "CartoVoyager", 0, 20, 256, ".png", 
                 arrayOf("https://a.basemaps.cartocdn.com/rastertiles/voyager/",
@@ -124,7 +138,6 @@ fun MapViewContainer(
         }
     }
 
-    // Update center/zoom from view state
     DisposableEffect(mapView) {
         val listener = object : org.osmdroid.events.MapListener {
             override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
@@ -137,12 +150,9 @@ fun MapViewContainer(
             }
         }
         mapView.addMapListener(listener)
-        onDispose {
-            mapView.removeMapListener(listener)
-        }
+        onDispose { mapView.removeMapListener(listener) }
     }
 
-    // Handle Search Target snap
     LaunchedEffect(targetLocation) {
         targetLocation?.let {
             mapView.controller.animateTo(it)
@@ -150,7 +160,6 @@ fun MapViewContainer(
         }
     }
 
-    // Handle "My Location" snap request
     LaunchedEffect(panToMyLocationTrigger) {
         if (panToMyLocationTrigger > 0) {
             val locationOverlay = mapView.overlays.filterIsInstance<MyLocationNewOverlay>().firstOrNull()
@@ -164,7 +173,6 @@ fun MapViewContainer(
         }
     }
 
-    // Handle lifecycle
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -175,9 +183,7 @@ fun MapViewContainer(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     AndroidView(
@@ -208,10 +214,13 @@ fun MapViewContainer(
                     GeofenceColor.GREEN -> androidx.compose.ui.graphics.Color(0xFF2E7D32).copy(alpha = activeFilter).toArgb()
                 }
 
+                // Count pending tasks for this fence
+                val pendingTaskCount = tasks.count { it.fenceId == fence.id && !it.isCompleted }
+
                 val marker = Marker(view).apply {
                     position = center
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    icon = createCircleMarker(mColor)
+                    icon = createCircleMarker(mColor, taskCount = pendingTaskCount)
                     infoWindow = null 
                     setOnMarkerClickListener { _, _ ->
                         onGeofenceClick(fence)
@@ -244,7 +253,6 @@ fun MapViewContainer(
                 }
                 view.overlays.add(draftMarker)
             }
-            
             view.invalidate()
         }
     )

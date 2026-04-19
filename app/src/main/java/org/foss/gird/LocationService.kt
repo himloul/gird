@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -35,22 +36,19 @@ class LocationService : Service(), LocationListener {
     private var currentMinDistance: Float = -1f
     
     // Physics constants
-    private val MIN_POLL_INTERVAL = 10000L // 10s (High Precision)
-    private val MAX_POLL_INTERVAL = 900000L // 15m (Battery Saver/Stationary)
-    private val SAFETY_FACTOR = 0.5 // Poll at 50% of the calculated time-to-boundary
+    private val MIN_POLL_INTERVAL = 10000L
+    private val MAX_POLL_INTERVAL = 900000L
+    private val SAFETY_FACTOR = 0.5
 
     override fun onCreate() {
         super.onCreate()
-        
         val prefs = getSharedPreferences("geoapp_prefs", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("is_monitoring_active", false)) {
             stopSelf()
             return
         }
-
         GeofenceRepository.load(this)
         GeofenceRepository.geofences.forEach { serviceStateCache[it.id] = it.lastState }
-
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         startForeground(NOTIFICATION_ID, createNotification("Dynamic monitoring active"))
         startTracking()
@@ -59,7 +57,6 @@ class LocationService : Service(), LocationListener {
     @SuppressLint("MissingPermission")
     private fun startTracking() {
         try {
-            // Always keep passive active (zero cost)
             locationManager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 30000L, 0f, this)
             adjustPollingRate(null) 
         } catch (e: Exception) { e.printStackTrace() }
@@ -68,80 +65,46 @@ class LocationService : Service(), LocationListener {
     private fun adjustPollingRate(currentLocation: Location?) {
         val mode = GeofenceRepository.loadPollingMode(this)
         val activeFences = GeofenceRepository.geofences.filter { it.isActive }
-        
         if (activeFences.isEmpty()) {
             updateRequest(MAX_POLL_INTERVAL, 500f, mode) 
             return
         }
-
         if (currentLocation == null) {
             updateRequest(60000L, 10f, mode) 
             return
         }
-
-        // 1. MATH: Find distance to the nearest boundary
         var minDistanceToBoundary = Double.MAX_VALUE
         activeFences.forEach { fence ->
-            val distToCenter = GeofenceUtils.calculateDistance(
-                currentLocation.latitude, currentLocation.longitude,
-                fence.latitude, fence.longitude
-            )
+            val distToCenter = GeofenceUtils.calculateDistance(currentLocation.latitude, currentLocation.longitude, fence.latitude, fence.longitude)
             val distToEdge = max(0.0, distToCenter - fence.radiusInMeters)
             if (distToEdge < minDistanceToBoundary) minDistanceToBoundary = distToEdge
         }
-
-        // 2. PHYSICS: Calculate Velocity (m/s)
-        // If device doesn't provide speed, calculate from last point
-        val velocity = if (currentLocation.hasSpeed()) {
-            currentLocation.speed.toDouble()
-        } else {
+        val velocity = if (currentLocation.hasSpeed()) currentLocation.speed.toDouble() else {
             val last = lastLocation
             if (last != null) {
                 val d = currentLocation.distanceTo(last).toDouble()
                 val t = (currentLocation.time - last.time) / 1000.0
                 if (t > 0) d / t else 0.0
-            } else 1.0 // Assume walking speed (1m/s) if unknown
+            } else 1.0
         }
-
-        // 3. ADAPTIVE LOGIC: Calculate next interval
-        // T = (Distance / Velocity) * Safety
-        val calculatedIntervalMs = if (velocity > 0.1) {
-            (minDistanceToBoundary / velocity) * 1000.0 * SAFETY_FACTOR
-        } else {
-            MAX_POLL_INTERVAL.toDouble() // Effectively stationary
-        }
-
-        // Clamp based on user mode
+        val calculatedIntervalMs = if (velocity > 0.1) (minDistanceToBoundary / velocity) * 1000.0 * SAFETY_FACTOR else MAX_POLL_INTERVAL.toDouble()
         val finalInterval = when (mode) {
             "High Precision" -> calculatedIntervalMs.toLong().coerceIn(MIN_POLL_INTERVAL, 120000L)
             "Battery Saver" -> calculatedIntervalMs.toLong().coerceIn(300000L, MAX_POLL_INTERVAL)
             else -> calculatedIntervalMs.toLong().coerceIn(30000L, MAX_POLL_INTERVAL)
         }
-
-        // Dynamic distance gating: don't wake up unless we moved at least 10% of the distance to the fence
         val minDistance = (minDistanceToBoundary * 0.1).toFloat().coerceIn(10f, 500f)
-
         updateRequest(finalInterval, minDistance, mode)
     }
 
     @SuppressLint("MissingPermission")
     private fun updateRequest(interval: Long, minDistance: Float, mode: String) {
         try {
-            // PROVIDER HANDOFF: 
-            // - If closer than 500m AND speed > 0, use GPS.
-            // - Otherwise use Network (Tower/WiFi) to save battery.
-            val provider = if (interval < 60000L || mode == "High Precision") {
-                LocationManager.GPS_PROVIDER
-            } else {
-                LocationManager.NETWORK_PROVIDER
-            }
-
+            val provider = if (interval < 60000L || mode == "High Precision") LocationManager.GPS_PROVIDER else LocationManager.NETWORK_PROVIDER
             if (provider == currentProvider && abs(interval - currentInterval) < 5000L) return
-
             locationManager.removeUpdates(this)
             locationManager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 30000L, 0f, this)
             locationManager.requestLocationUpdates(provider, interval, minDistance, this)
-            
             currentProvider = provider
             currentInterval = interval
             currentMinDistance = minDistance
@@ -149,19 +112,12 @@ class LocationService : Service(), LocationListener {
     }
 
     override fun onLocationChanged(location: Location) {
-        // High-level filter: accuracy must be better than the distance we are checking
         if (location.hasAccuracy() && location.accuracy > 200f) return
-
         val last = lastLocation
         if (last != null && location.distanceTo(last) < 2f) return
-        
         lastLocation = location
-
-        if (wakeLock == null) {
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Gird:LocProc")
-        }
+        if (wakeLock == null) wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Gird:LocProc")
         wakeLock?.acquire(3000L)
-
         checkGeofences(location)
         adjustPollingRate(location)
     }
@@ -171,26 +127,17 @@ class LocationService : Service(), LocationListener {
 
     private fun checkGeofences(location: Location) {
         GeofenceRepository.geofences.filter { it.isActive }.forEach { fence ->
-            val distance = GeofenceUtils.calculateDistance(
-                location.latitude, location.longitude,
-                fence.latitude, fence.longitude
-            )
-
-            // Dynamic Hysteresis: prevents flickering at the boundary
+            val distance = GeofenceUtils.calculateDistance(location.latitude, location.longitude, fence.latitude, fence.longitude)
             val buffer = (location.accuracy * 0.5).coerceAtLeast(5.0)
             val isInside = distance <= (fence.radiusInMeters + buffer)
-            
             val currentState = serviceStateCache[fence.id] ?: fence.lastState
             val newState = if (isInside) GeofenceState.INSIDE else GeofenceState.OUTSIDE
-
             if (newState != currentState) {
-                // Throttle: Don't trigger same fence more than once every 30 seconds
                 val lastTrigger = lastTriggerTimes[fence.id] ?: 0L
                 if (System.currentTimeMillis() - lastTrigger > 30000L) {
                     serviceStateCache[fence.id] = newState
                     lastTriggerTimes[fence.id] = System.currentTimeMillis()
                     GeofenceRepository.updateGeofenceState(this, fence.id, newState)
-                    
                     val event = GeofenceEvent(UUID.randomUUID().toString(), fence.name, newState)
                     GeofenceRepository.addEvent(this, event)
                     sendGeofenceNotification(fence, newState)
@@ -201,38 +148,43 @@ class LocationService : Service(), LocationListener {
 
     private fun sendGeofenceNotification(fence: Geofence, state: GeofenceState) {
         val title = if (state == GeofenceState.INSIDE) "Arrived at ${fence.name}" else "Left ${fence.name}"
-        
-        // Find tasks for this location
         val pendingTasks = GeofenceRepository.tasks.filter { it.fenceId == fence.id && !it.isCompleted }
-        
-        // TIME FILTER: If task has a time window, check if we are in it
         val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         val relevantTasks = pendingTasks.filter { task ->
-            if (task.startTime != null && task.endTime != null) {
-                currentHour in task.startTime..task.endTime
-            } else true
+            if (task.startTime != null && task.endTime != null) currentHour in task.startTime..task.endTime else true
         }
 
-        if (state == GeofenceState.OUTSIDE && pendingTasks.isNotEmpty()) return // Don't notify on exit if tasks remain? (Optional logic)
+        if (state == GeofenceState.OUTSIDE && pendingTasks.isNotEmpty()) return
 
-        val body = if (relevantTasks.isNotEmpty()) {
-            "You have ${relevantTasks.size} tasks here: ${relevantTasks.first().content}..."
-        } else {
-            "Context active."
-        }
+        val body = if (relevantTasks.isNotEmpty()) "You have ${relevantTasks.size} tasks here: ${relevantTasks.first().content}..." else "Context active."
 
         val channel = NotificationChannel(ALERT_CHANNEL_ID, "Geofence Alerts", NotificationManager.IMPORTANCE_HIGH)
         notificationManager.createNotificationChannel(channel)
 
-        val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_custom_pin)
             .setContentTitle(title)
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .build()
 
-        notificationManager.notify(fence.id.hashCode(), notification)
+        // Step 1: Interactive Action
+        if (state == GeofenceState.INSIDE && relevantTasks.isNotEmpty()) {
+            val task = relevantTasks.first()
+            val actionIntent = Intent(this, TaskActionReceiver::class.java).apply {
+                putExtra("task_id", task.id)
+                putExtra("fence_id", fence.id)
+            }
+            val pendingAction = PendingIntent.getBroadcast(
+                this, 
+                task.id.hashCode(), 
+                actionIntent, 
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(android.R.drawable.ic_menu_edit, "Mark as Done", pendingAction)
+        }
+
+        notificationManager.notify(fence.id.hashCode(), builder.build())
     }
 
     private fun createNotification(content: String): Notification {

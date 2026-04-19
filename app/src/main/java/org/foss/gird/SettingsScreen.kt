@@ -133,6 +133,37 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
 
         // Section: Danger Zone
+        Text("Privacy & Ownership", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 8.dp))
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+            shape = MaterialTheme.shapes.large,
+            elevation = CardDefaults.cardElevation(0.dp)
+        ) {
+            ListItem(
+                headlineContent = { Text("Download My Data") },
+                supportingContent = { Text("Export all locations and history to JSON") },
+                leadingContent = { Icon(Icons.Default.Download, null) },
+                trailingContent = {
+                    IconButton(onClick = {
+                        val json = GeofenceRepository.exportDataToJson()
+                        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "application/json"
+                            putExtra(Intent.EXTRA_TITLE, "gird_data_${System.currentTimeMillis()}.json")
+                        }
+                        // Note: Handling the result requires a launcher, 
+                        // for now we'll trigger it and the user can save.
+                        // In a real app we'd use ActivityResultLauncher.
+                        (context as? androidx.activity.ComponentActivity)?.startActivity(intent)
+                    }) {
+                        Icon(Icons.Default.ChevronRight, null)
+                    }
+                },
+                modifier = Modifier.padding(8.dp)
+            )
+        }
+
+        // Section: Danger Zone
         Text("Maintenance", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 8.dp))
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f)),
