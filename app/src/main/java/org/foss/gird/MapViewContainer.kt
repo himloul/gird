@@ -1,20 +1,11 @@
 package org.foss.gird
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableDoubleStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.toArgb
-import androidx.core.content.ContextCompat
-import androidx.core.graphics.drawable.DrawableCompat
 import androidx.compose.material3.MaterialTheme
 import android.graphics.Color
 import android.widget.Toast
@@ -22,8 +13,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.preference.PreferenceManager
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.util.GeoPoint
+import org.osmdroid.util.MapTileIndex
+import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -47,13 +40,13 @@ fun MapViewContainer(
     geofences: List<Geofence> = emptyList(),
     selectedGeofence: Geofence? = null,
     selectedPoint: GeoPoint? = null,
+    targetLocation: GeoPoint? = null,
     panToMyLocationTrigger: Int = 0,
     isMonitoringActive: Boolean = false,
     initialCenter: GeoPoint = GeoPoint(40.7128, -74.0060),
     initialZoom: Double = 12.0
 ) {
     val context = LocalContext.current
-    
     val draftColor = MaterialTheme.colorScheme.tertiary.toArgb()
     
     // Programmatic Circular Marker Drawer
@@ -65,14 +58,12 @@ fun MapViewContainer(
         val center = size / 2f
         val radius = size / 2.5f
 
-        // White Stroke
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = Color.WHITE
             this.style = Paint.Style.STROKE
             this.strokeWidth = 2f * density
         }
         
-        // Solid Core
         val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
             this.style = Paint.Style.FILL
@@ -80,7 +71,6 @@ fun MapViewContainer(
 
         canvas.drawCircle(center, center, radius, fillPaint)
         canvas.drawCircle(center, center, radius, strokePaint)
-        
         return BitmapDrawable(context.resources, bitmap)
     }
 
@@ -92,10 +82,22 @@ fun MapViewContainer(
 
     val mapView = remember {
         MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            // Carto Voyager - Clean, Modern, and Clear Names
+            setTileSource(object : OnlineTileSourceBase(
+                "CartoVoyager", 0, 20, 256, ".png", 
+                arrayOf("https://a.basemaps.cartocdn.com/rastertiles/voyager/",
+                        "https://b.basemaps.cartocdn.com/rastertiles/voyager/",
+                        "https://c.basemaps.cartocdn.com/rastertiles/voyager/")
+            ) {
+                override fun getTileURLString(pTileIndex: Long): String {
+                    return baseUrl + MapTileIndex.getZoom(pTileIndex) + "/" + 
+                           MapTileIndex.getX(pTileIndex) + "/" + 
+                           MapTileIndex.getY(pTileIndex) + mImageFilenameEnding
+                }
+            })
+            
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-            
             controller.setZoom(initialZoom)
             controller.setCenter(initialCenter)
             
@@ -103,25 +105,15 @@ fun MapViewContainer(
             locationOverlay.enableMyLocation()
             overlays.add(locationOverlay)
 
-            // Add Compass
             val compassOverlay = CompassOverlay(context, InternalCompassOrientationProvider(context), this)
             compassOverlay.enableCompass()
-            
-            // Move to Bottom Left (approx 45dp from left, and near the bottom)
             val dm = context.resources.displayMetrics
-            // X is pixels from left, Y is pixels from TOP
-            // To be at bottom, Y must be close to heightPixels
             compassOverlay.setCompassCenter(45f * dm.density, dm.heightPixels - (150f * dm.density)) 
-            
             overlays.add(compassOverlay)
-
-            // Removed immediate listeners to avoid excessive disk I/O.
-            // Map state saving is now handled via a debounced LaunchedEffect below.
         }
     }
 
     // Debounced Map State Saving
-    // Triggers after 500ms of inactivity to avoid hammering SharedPreferences during scroll/zoom
     var mapCenter by remember { mutableStateOf(initialCenter) }
     var mapZoom by remember { mutableDoubleStateOf(initialZoom) }
 
@@ -147,6 +139,14 @@ fun MapViewContainer(
         mapView.addMapListener(listener)
         onDispose {
             mapView.removeMapListener(listener)
+        }
+    }
+
+    // Handle Search Target snap
+    LaunchedEffect(targetLocation) {
+        targetLocation?.let {
+            mapView.controller.animateTo(it)
+            mapView.controller.setZoom(17.0)
         }
     }
 
@@ -184,15 +184,13 @@ fun MapViewContainer(
         factory = { mapView },
         modifier = modifier,
         update = { view ->
-            // Keep specialized overlays, clear dynamic markers/circles
             val specialOverlays = view.overlays.filter { 
                 it is MyLocationNewOverlay || it is CompassOverlay || it is ScaleBarOverlay 
             }
             view.overlays.clear()
             view.overlays.addAll(specialOverlays)
 
-            // 1. Add map listener for clicking FIRST (Bottom of stack)
-            val eventsOverlay = org.osmdroid.views.overlay.MapEventsOverlay(object : org.osmdroid.events.MapEventsReceiver {
+            val eventsOverlay = org.osmdroid.views.overlay.MapEventsOverlay(object : MapEventsReceiver {
                 override fun singleTapConfirmedHelper(p: GeoPoint?): Boolean {
                     p?.let { onMapClick(it) }
                     return true
@@ -201,20 +199,15 @@ fun MapViewContainer(
             })
             view.overlays.add(eventsOverlay)
             
-            // 2. Draw Saved Geofences
             geofences.forEach { fence ->
                 val center = GeoPoint(fence.latitude, fence.longitude)
-                
-                // Final color is filtered by both Global Monitoring state AND Individual Fence activity
                 val activeFilter = if (fence.isActive && isMonitoringActive) 1.0f else 0.3f
-                
                 val mColor = when(fence.color) {
                     GeofenceColor.RED -> androidx.compose.ui.graphics.Color(0xFFD32F2F).copy(alpha = activeFilter).toArgb()
                     GeofenceColor.BLUE -> androidx.compose.ui.graphics.Color(0xFF1976D2).copy(alpha = activeFilter).toArgb()
                     GeofenceColor.GREEN -> androidx.compose.ui.graphics.Color(0xFF2E7D32).copy(alpha = activeFilter).toArgb()
                 }
 
-                // Add marker
                 val marker = Marker(view).apply {
                     position = center
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -227,15 +220,12 @@ fun MapViewContainer(
                 }
                 view.overlays.add(marker)
 
-                // Highlight selected geofence
                 val isSelected = fence.id == selectedGeofence?.id
-
-                // Add circle
                 val circle = Polygon.pointsAsCircle(center, fence.radiusInMeters.toDouble())
                 val polygon = Polygon(view).apply {
                     points = circle
-                    fillColor = Color.argb(if (isSelected) 80 else if (fence.isActive && isMonitoringActive) 45 else 15, Color.red(mColor), Color.green(mColor), Color.blue(mColor))
-                    strokeColor = if (isSelected) Color.WHITE else mColor
+                    fillColor = android.graphics.Color.argb(if (isSelected) 80 else if (fence.isActive && isMonitoringActive) 45 else 15, android.graphics.Color.red(mColor), android.graphics.Color.green(mColor), android.graphics.Color.blue(mColor))
+                    strokeColor = if (isSelected) android.graphics.Color.WHITE else mColor
                     strokeWidth = if (isSelected) 8f else if (fence.isActive) 3f else 1f
                     setOnClickListener { _, _, _ ->
                         onGeofenceClick(fence)
@@ -245,12 +235,11 @@ fun MapViewContainer(
                 view.overlays.add(polygon)
             }
 
-            // 3. Draw Selected Point (Draft)
             if (selectedPoint != null) {
                 val draftMarker = Marker(view).apply {
                     position = selectedPoint
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    icon = createCircleMarker(draftColor, 20) // Slightly larger for draft
+                    icon = createCircleMarker(draftColor, 20)
                     infoWindow = null
                 }
                 view.overlays.add(draftMarker)

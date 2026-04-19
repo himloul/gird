@@ -23,8 +23,47 @@ object GeofenceRepository {
     private const val PREFS_NAME = "geoapp_prefs"
     private const val KEY_GEOFENCES = "geofences_json"
     private const val KEY_HISTORY = "history_json"
+    private const val KEY_TASKS = "tasks_json"
+    
     private val _history = mutableStateListOf<GeofenceEvent>()
     val history: List<GeofenceEvent> get() = _history
+
+    private val _tasks = mutableStateListOf<Task>()
+    val tasks: List<Task> get() = _tasks
+
+    fun addTask(context: Context, task: Task) {
+        synchronized(lock) {
+            _tasks.add(0, task)
+        }
+        save(context)
+    }
+
+    fun removeTask(context: Context, task: Task) {
+        synchronized(lock) {
+            _tasks.remove(task)
+        }
+        save(context)
+    }
+
+    fun toggleTaskCompletion(context: Context, id: String, isCompleted: Boolean) {
+        synchronized(lock) {
+            val index = _tasks.indexOfFirst { it.id == id }
+            if (index != -1) {
+                _tasks[index] = _tasks[index].copy(isCompleted = isCompleted)
+            }
+        }
+        save(context)
+    }
+
+    fun updateTask(context: Context, updatedTask: Task) {
+        synchronized(lock) {
+            val index = _tasks.indexOfFirst { it.id == updatedTask.id }
+            if (index != -1) {
+                _tasks[index] = updatedTask
+            }
+        }
+        save(context)
+    }
 
     fun addEvent(context: Context, event: GeofenceEvent) {
         synchronized(lock) {
@@ -120,6 +159,26 @@ object GeofenceRepository {
                     }
                 }
 
+                // Load Tasks
+                val tasksJson = prefs.getString(KEY_TASKS, null)
+                val loadedTasks = mutableListOf<Task>()
+                if (tasksJson != null) {
+                    val jsonArray = JSONArray(tasksJson)
+                    for (i in 0 until jsonArray.length()) {
+                        val obj = jsonArray.getJSONObject(i)
+                        loadedTasks.add(Task(
+                            id = obj.getString("id"),
+                            fenceId = obj.getString("fenceId"),
+                            content = obj.getString("content"),
+                            isCompleted = obj.getBoolean("isCompleted"),
+                            timestamp = obj.getLong("time"),
+                            dueDate = if (obj.has("dueDate")) obj.getLong("dueDate") else null,
+                            startTime = if (obj.has("startTime")) obj.getInt("startTime") else null,
+                            endTime = if (obj.has("endTime")) obj.getInt("endTime") else null
+                        ))
+                    }
+                }
+
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {
                     synchronized(lock) {
@@ -127,6 +186,8 @@ object GeofenceRepository {
                         _geofences.addAll(loadedFences)
                         _history.clear()
                         _history.addAll(loadedHistory)
+                        _tasks.clear()
+                        _tasks.addAll(loadedTasks)
                     }
                 }
             } catch (e: Exception) {
@@ -139,6 +200,7 @@ object GeofenceRepository {
         // Deep copy the lists to avoid concurrent modification issues during background save
         val fenceSnapshot = synchronized(lock) { _geofences.toList() }
         val historySnapshot = synchronized(lock) { _history.toList() }
+        val taskSnapshot = synchronized(lock) { _tasks.toList() }
 
         repositoryScope.launch {
             try {
@@ -170,9 +232,25 @@ object GeofenceRepository {
                     })
                 }
 
+                // Save Tasks
+                val taskArray = JSONArray()
+                taskSnapshot.forEach { task ->
+                    taskArray.put(JSONObject().apply {
+                        put("id", task.id)
+                        put("fenceId", task.fenceId)
+                        put("content", task.content)
+                        put("isCompleted", task.isCompleted)
+                        put("time", task.timestamp)
+                        task.dueDate?.let { put("dueDate", it) }
+                        task.startTime?.let { put("startTime", it) }
+                        task.endTime?.let { put("endTime", it) }
+                    })
+                }
+
                 prefs.edit()
                     .putString(KEY_GEOFENCES, fenceArray.toString())
                     .putString(KEY_HISTORY, historyArray.toString())
+                    .putString(KEY_TASKS, taskArray.toString())
                     .apply()
             } catch (e: Exception) {
                 Log.e(TAG, "Error saving data", e)
