@@ -113,9 +113,9 @@ fun FencesScreen(onBack: () -> Unit) {
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(16.dp),
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            shape = androidx.compose.foundation.shape.CircleShape
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.primary,
+            elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
         ) {
             Icon(Icons.Default.Add, contentDescription = "Add Fence")
         }
