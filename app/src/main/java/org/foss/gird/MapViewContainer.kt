@@ -233,9 +233,9 @@ fun MapViewContainer(
                 val circle = Polygon.pointsAsCircle(center, fence.radiusInMeters.toDouble())
                 val polygon = Polygon(view).apply {
                     points = circle
-                    fillColor = android.graphics.Color.argb(if (isSelected) 80 else if (fence.isActive && isMonitoringActive) 45 else 15, android.graphics.Color.red(mColor), android.graphics.Color.green(mColor), android.graphics.Color.blue(mColor))
-                    strokeColor = if (isSelected) android.graphics.Color.WHITE else mColor
-                    strokeWidth = if (isSelected) 8f else if (fence.isActive) 3f else 1f
+                    fillColor = android.graphics.Color.argb(if (isSelected) 100 else if (fence.isActive && isMonitoringActive) 50 else 20, android.graphics.Color.red(mColor), android.graphics.Color.green(mColor), android.graphics.Color.blue(mColor))
+                    strokeColor = if (isSelected) mColor else android.graphics.Color.TRANSPARENT // NO STROKE
+                    strokeWidth = if (isSelected) 6f else 0f
                     setOnClickListener { _, _, _ ->
                         onGeofenceClick(fence)
                         true 

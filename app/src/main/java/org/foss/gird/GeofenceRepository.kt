@@ -38,6 +38,47 @@ object GeofenceRepository {
         save(context)
     }
 
+    /**
+     * Parses a query string with context awareness.
+     * @param activeFenceId If provided, task will be auto-tagged here if no @ is found.
+     */
+    fun addTaskByQuery(context: Context, query: String, activeFenceId: String? = null) {
+        if (query.isBlank()) return
+        
+        var content = query
+        var fenceId: String? = null
+        var isRecurring = false
+        
+        // 1. Parse Recurring Flag (!)
+        if (content.contains("!daily") || content.contains("!frequent")) {
+            isRecurring = true
+            content = content.replace("!daily", "").replace("!frequent", "").trim()
+        }
+
+        // 2. Parse @Location
+        val atIndex = content.lastIndexOf("@")
+        if (atIndex != -1) {
+            val locationName = content.substring(atIndex + 1).trim()
+            val matchedFence = _geofences.find { it.name.equals(locationName, ignoreCase = true) }
+            if (matchedFence != null) {
+                fenceId = matchedFence.id
+                content = content.substring(0, atIndex).trim()
+            }
+        }
+
+        // 3. Context Auto-Tagging
+        // If no explicit @ found, use the current active location
+        if (fenceId == null) {
+            fenceId = activeFenceId
+        }
+
+        addTask(context, Task(
+            content = content,
+            fenceId = fenceId,
+            isRecurring = isRecurring
+        ))
+    }
+
     fun removeTask(context: Context, task: Task) {
         synchronized(lock) {
             _tasks.remove(task)
@@ -71,7 +112,7 @@ object GeofenceRepository {
     fun addEvent(context: Context, event: GeofenceEvent) {
         synchronized(lock) {
             _history.add(0, event) // Add to top
-            if (_history.size > 200) _history.removeLast() // Increased for better storyline
+            if (_history.size > 200) _history.removeLast()
         }
         save(context)
     }
@@ -79,7 +120,6 @@ object GeofenceRepository {
     fun clearHistory(context: Context) {
         synchronized(lock) {
             _history.clear()
-            // Also reset completion timestamps so they disappear from the storyline
             for (i in _tasks.indices) {
                 if (_tasks[i].completedAt != null) {
                     _tasks[i] = _tasks[i].copy(completedAt = null)
@@ -177,14 +217,15 @@ object GeofenceRepository {
                         val obj = jsonArray.getJSONObject(i)
                         loadedTasks.add(Task(
                             id = obj.getString("id"),
-                            fenceId = obj.getString("fenceId"),
+                            fenceId = if (obj.has("fenceId")) obj.optString("fenceId", "") else null,
                             content = obj.getString("content"),
                             isCompleted = obj.getBoolean("isCompleted"),
                             timestamp = obj.getLong("time"),
                             dueDate = if (obj.has("dueDate")) obj.getLong("dueDate") else null,
                             startTime = if (obj.has("startTime")) obj.getInt("startTime") else null,
                             endTime = if (obj.has("endTime")) obj.getInt("endTime") else null,
-                            completedAt = if (obj.has("completedAt")) obj.getLong("completedAt") else null
+                            completedAt = if (obj.has("completedAt")) obj.getLong("completedAt") else null,
+                            isRecurring = if (obj.has("isRecurring")) obj.getBoolean("isRecurring") else false
                         ))
                     }
                 }
@@ -243,7 +284,7 @@ object GeofenceRepository {
                 taskSnapshot.forEach { task ->
                     taskArray.put(JSONObject().apply {
                         put("id", task.id)
-                        put("fenceId", task.fenceId)
+                        put("fenceId", task.fenceId ?: "")
                         put("content", task.content)
                         put("isCompleted", task.isCompleted)
                         put("time", task.timestamp)
@@ -251,6 +292,7 @@ object GeofenceRepository {
                         task.startTime?.let { put("startTime", it) }
                         task.endTime?.let { put("endTime", it) }
                         task.completedAt?.let { put("completedAt", it) }
+                        put("isRecurring", task.isRecurring)
                     })
                 }
 
@@ -305,7 +347,7 @@ object GeofenceRepository {
         root.put("tasks", taskArray)
         root.put("exported_at", System.currentTimeMillis())
 
-        return root.toString(4) // Indented for readability
+        return root.toString(4) 
     }
 
     fun addGeofence(context: Context, geofence: Geofence) {
