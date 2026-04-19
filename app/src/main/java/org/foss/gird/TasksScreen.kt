@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,6 +30,7 @@ fun TasksScreen(onNavigateToMap: () -> Unit) {
     val context = LocalContext.current
     val tasks = GeofenceRepository.tasks
     val geofences = GeofenceRepository.geofences
+    val history = GeofenceRepository.history
     
     val activeFence = geofences.find { it.lastState == GeofenceState.INSIDE }
     val groupedTasks = tasks.groupBy { it.fenceId }
@@ -50,7 +52,6 @@ fun TasksScreen(onNavigateToMap: () -> Unit) {
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // 1. PINNED: Active Context
                 if (activeFence != null) {
                     item {
                         Text("Right Now", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
@@ -64,7 +65,6 @@ fun TasksScreen(onNavigateToMap: () -> Unit) {
                     }
                 }
 
-                // 2. Proximity List
                 item {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Nearby Contexts", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
@@ -79,12 +79,57 @@ fun TasksScreen(onNavigateToMap: () -> Unit) {
                         onEditRequest = { taskToEdit = it }
                     )
                 }
+// 3. STORYLINE SECTION
+item {
+    Spacer(modifier = Modifier.height(24.dp))
+    var showClearConfirm by remember { mutableStateOf(false) }
 
-                if (tasks.isEmpty() && activeFence == null) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Today's Journey", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+
+        if (history.isNotEmpty() || tasks.any { it.isCompleted }) {
+            TextButton(
+                onClick = { showClearConfirm = true },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                modifier = Modifier.height(24.dp)
+            ) {
+                Text("Clear", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            }
+        }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Reset Journey?") },
+            text = { Text("This will clear today's movement and achievements from the timeline. Your tasks will stay checked.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    GeofenceRepository.clearHistory(context)
+                    showClearConfirm = false
+                }) { Text("Clear", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+                if (history.isEmpty() && tasks.none { it.isCompleted }) {
                     item {
-                        Box(modifier = Modifier.fillParentMaxHeight(0.6f), contentAlignment = Alignment.Center) {
-                            Text("No tasks active.", color = MaterialTheme.colorScheme.outlineVariant)
+                        Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                            Text("Your story begins when you move.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                         }
+                    }
+                } else {
+                    val storyline = buildStoryline(history, tasks)
+                    items(storyline) { item ->
+                        StorylineNode(item)
                     }
                 }
                 
@@ -99,20 +144,13 @@ fun TasksScreen(onNavigateToMap: () -> Unit) {
             title = { Text("Delete Task?") },
             text = { Text("Are you sure you want to delete \"${taskToDelete?.content}\"?") },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        GeofenceRepository.removeTask(context, taskToDelete!!)
-                        taskToDelete = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Delete")
-                }
+                TextButton(onClick = {
+                    GeofenceRepository.removeTask(context, taskToDelete!!)
+                    taskToDelete = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { taskToDelete = null }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { taskToDelete = null }) { Text("Cancel") }
             }
         )
     }
@@ -137,6 +175,61 @@ fun TasksScreen(onNavigateToMap: () -> Unit) {
     }
 }
 
+sealed class StoryItem(val time: Long) {
+    class Arrival(time: Long, val location: String) : StoryItem(time)
+    class Departure(time: Long, val location: String, val duration: String?) : StoryItem(time)
+    class Achievement(time: Long, val taskContent: String) : StoryItem(time)
+}
+
+fun buildStoryline(history: List<GeofenceEvent>, tasks: List<Task>): List<StoryItem> {
+    val items = mutableListOf<StoryItem>()
+    history.forEach { event ->
+        if (event.eventType == GeofenceState.INSIDE) {
+            items.add(StoryItem.Arrival(event.timestamp, event.fenceName))
+        } else {
+            val arrival = history.find { it.fenceName == event.fenceName && it.eventType == GeofenceState.INSIDE && it.timestamp < event.timestamp }
+            val durationStr = arrival?.let {
+                val diffMin = (event.timestamp - it.timestamp) / 60000
+                if (diffMin < 60) "${diffMin}m" else "${diffMin/60}h ${diffMin%60}m"
+            }
+            items.add(StoryItem.Departure(event.timestamp, event.fenceName, durationStr))
+        }
+    }
+    tasks.filter { it.isCompleted && it.completedAt != null }.forEach { task ->
+        items.add(StoryItem.Achievement(task.completedAt!!, task.content))
+    }
+    return items.sortedByDescending { it.time }.take(20)
+}
+
+@Composable
+fun StorylineNode(item: StoryItem) {
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(32.dp)) {
+            Box(modifier = Modifier.size(8.dp).background(
+                when(item) {
+                    is StoryItem.Arrival -> MaterialTheme.colorScheme.primary
+                    is StoryItem.Achievement -> Color(0xFF4CAF50)
+                    is StoryItem.Departure -> MaterialTheme.colorScheme.outline
+                }, CircleShape
+            ))
+            Box(modifier = Modifier.fillMaxHeight().width(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+        }
+        Column(modifier = Modifier.padding(bottom = 16.dp)) {
+            val timeStr = android.text.format.DateFormat.format("HH:mm", Date(item.time)).toString()
+            Text(timeStr, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            when(item) {
+                is StoryItem.Arrival -> Text(text = "Arrived at ${item.location}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                is StoryItem.Departure -> Text(text = "Left ${item.location}" + (item.duration?.let { " (Stayed $it)" } ?: ""), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                is StoryItem.Achievement -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(14.dp), tint = Color(0xFF4CAF50))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = item.taskContent, style = MaterialTheme.typography.bodyMedium, textDecoration = TextDecoration.LineThrough, color = MaterialTheme.colorScheme.outline)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun ActiveLocationHub(fence: Geofence, tasks: List<Task>, onDeleteRequest: (Task) -> Unit, onEditRequest: (Task) -> Unit) {
     val context = LocalContext.current
@@ -146,7 +239,6 @@ fun ActiveLocationHub(fence: Geofence, tasks: List<Task>, onDeleteRequest: (Task
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        elevation = CardDefaults.cardElevation(0.dp),
         shape = RoundedCornerShape(24.dp)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
@@ -155,46 +247,21 @@ fun ActiveLocationHub(fence: Geofence, tasks: List<Task>, onDeleteRequest: (Task
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(fence.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
             }
-            
             Spacer(modifier = Modifier.height(16.dp))
-            
-            if (pendingTasks.isEmpty()) {
-                Text("Zero tasks here. Enjoy your stay!", style = MaterialTheme.typography.bodyMedium)
-            } else {
-                pendingTasks.forEach { task ->
-                    TaskRowMinimal(
-                        task = task, 
-                        onToggle = { GeofenceRepository.toggleTaskCompletion(context, task.id, it) },
-                        onDelete = { onDeleteRequest(task) },
-                        onEdit = { onEditRequest(task) }
-                    )
-                }
+            pendingTasks.forEach { task ->
+                TaskRowMinimal(task, { GeofenceRepository.toggleTaskCompletion(context, task.id, it) }, { onDeleteRequest(task) }, { onEditRequest(task) })
             }
-
+            if (pendingTasks.isEmpty()) Text("No tasks here.", style = MaterialTheme.typography.bodyMedium)
             Spacer(modifier = Modifier.height(16.dp))
-            
             if (!showQuickAdd) {
-                Button(
-                    onClick = { showQuickAdd = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Quick Add")
+                Button(onClick = { showQuickAdd = true }, shape = RoundedCornerShape(12.dp)) {
+                    Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp)); Spacer(modifier = Modifier.width(8.dp)); Text("Quick Add")
                 }
             } else {
-                QuickAddRow(onAdd = { content, dueDate, start, end ->
-                    GeofenceRepository.addTask(context, Task(
-                        fenceId = fence.id, 
-                        content = content,
-                        dueDate = dueDate,
-                        startTime = start,
-                        endTime = end
-                    ))
+                QuickAddRow({ content, _, s, e ->
+                    GeofenceRepository.addTask(context, Task(fenceId = fence.id, content = content, startTime = s, endTime = e))
                     showQuickAdd = false
-                }, onCancel = { showQuickAdd = false })
+                }, { showQuickAdd = false })
             }
         }
     }
@@ -204,89 +271,43 @@ fun ActiveLocationHub(fence: Geofence, tasks: List<Task>, onDeleteRequest: (Task
 @Composable
 fun LocationContextCard(fence: Geofence, tasks: List<Task>, onDeleteRequest: (Task) -> Unit, onEditRequest: (Task) -> Unit) {
     val context = LocalContext.current
-    val pendingCount = tasks.count { !it.isCompleted }
     var expanded by remember { mutableStateOf(false) }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-        elevation = CardDefaults.cardElevation(0.dp),
         shape = RoundedCornerShape(16.dp),
         onClick = { expanded = !expanded }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).background(
-                        when(fence.color) {
-                            GeofenceColor.RED -> Color(0xFFD32F2F)
-                            GeofenceColor.BLUE -> Color(0xFF1976D2)
-                            GeofenceColor.GREEN -> Color(0xFF2E7D32)
-                        }, CircleShape))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(fence.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Box(modifier = Modifier.size(8.dp).background(when(fence.color) {
+                        GeofenceColor.RED -> Color(0xFFD32F2F)
+                        GeofenceColor.BLUE -> Color(0xFF1976D2)
+                        else -> Color(0xFF2E7D32)
+                    }, CircleShape))
+                    Spacer(modifier = Modifier.width(12.dp)); Text(fence.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
-                
-                if (pendingCount > 0) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = CircleShape
-                    ) {
-                        Text(
-                            pendingCount.toString(), 
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
+                val count = tasks.count { !it.isCompleted }
+                if (count > 0) Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = CircleShape) {
+                    Text(count.toString(), modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall)
                 }
             }
-
             AnimatedVisibility(visible = expanded) {
                 var showAddTaskDialog by remember { mutableStateOf(false) }
                 Column(modifier = Modifier.padding(top = 12.dp)) {
-                    if (tasks.isEmpty()) {
-                        Text("No tasks saved for this location.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-                    } else {
-                        tasks.forEach { task ->
-                            TaskRowMinimal(
-                                task = task, 
-                                onToggle = { GeofenceRepository.toggleTaskCompletion(context, task.id, it) },
-                                onDelete = { onDeleteRequest(task) },
-                                onEdit = { onEditRequest(task) }
-                            )
-                        }
+                    tasks.forEach { task ->
+                        TaskRowMinimal(task, { GeofenceRepository.toggleTaskCompletion(context, task.id, it) }, { onDeleteRequest(task) }, { onEditRequest(task) })
                     }
-                    
-                    TextButton(
-                        onClick = { showAddTaskDialog = true },
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Icon(Icons.Outlined.Add, null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Add Task")
+                    TextButton(onClick = { showAddTaskDialog = true }, modifier = Modifier.align(Alignment.End)) {
+                        Icon(Icons.Outlined.Add, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Add Task")
                     }
                 }
-
                 if (showAddTaskDialog) {
-                    TaskFormDialog(
-                        title = "New Task",
-                        fenceName = fence.name,
-                        onDismiss = { showAddTaskDialog = false },
-                        onConfirm = { content, dueDate, start, end ->
-                            GeofenceRepository.addTask(context, Task(
-                                fenceId = fence.id, 
-                                content = content,
-                                dueDate = dueDate,
-                                startTime = start,
-                                endTime = end
-                            ))
-                            showAddTaskDialog = false
-                        }
-                    )
+                    TaskFormDialog("New Task", "", null, fence.name, { showAddTaskDialog = false }, { content, _, s, e ->
+                        GeofenceRepository.addTask(context, Task(fenceId = fence.id, content = content, startTime = s, endTime = e))
+                        showAddTaskDialog = false
+                    })
                 }
             }
         }
@@ -295,55 +316,25 @@ fun LocationContextCard(fence: Geofence, tasks: List<Task>, onDeleteRequest: (Ta
 
 @Composable
 fun TaskRowMinimal(task: Task, onToggle: (Boolean) -> Unit, onDelete: () -> Unit, onEdit: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Checkbox(
-            checked = task.isCompleted,
-            onCheckedChange = onToggle,
-            modifier = Modifier.size(20.dp),
-            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
-        )
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = task.isCompleted, onCheckedChange = onToggle, modifier = Modifier.size(20.dp))
         Spacer(modifier = Modifier.width(12.dp))
-        Column(
-            modifier = Modifier.weight(1f).selectable(selected = false, onClick = onEdit)
-        ) {
-            Text(
-                text = task.content,
-                style = MaterialTheme.typography.bodyLarge,
-                textDecoration = if (task.isCompleted) TextDecoration.LineThrough else null,
-                color = if (task.isCompleted) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface
-            )
+        Column(modifier = Modifier.weight(1f).selectable(selected = false, onClick = onEdit)) {
+            Text(text = task.content, style = MaterialTheme.typography.bodyLarge, textDecoration = if (task.isCompleted) TextDecoration.LineThrough else null, color = if (task.isCompleted) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface)
             if (task.dueDate != null || task.startTime != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.AccessTime, 
-                        null, 
-                        modifier = Modifier.size(12.dp), 
-                        tint = MaterialTheme.colorScheme.outline
-                    )
+                    Icon(Icons.Default.AccessTime, null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.outline)
                     Spacer(modifier = Modifier.width(4.dp))
                     val timeStr = buildString {
-                        if (task.dueDate != null) {
-                            append(android.text.format.DateFormat.format("MMM dd", java.util.Date(task.dueDate)))
-                        }
-                        if (task.startTime != null && task.endTime != null) {
-                            if (isNotEmpty()) append(", ")
-                            append("${task.startTime}:00 - ${task.endTime}:00")
-                        }
+                        if (task.dueDate != null) append(android.text.format.DateFormat.format("MMM dd", Date(task.dueDate)))
+                        if (task.startTime != null) { if (isNotEmpty()) append(", "); append("${task.startTime}:00 - ${task.endTime}:00") }
                     }
                     Text(timeStr, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
             }
         }
         IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-            Icon(
-                Icons.Default.DeleteOutline, 
-                contentDescription = "Delete", 
-                tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                modifier = Modifier.size(18.dp)
-            )
+            Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
         }
     }
 }
@@ -353,59 +344,18 @@ fun TaskRowMinimal(task: Task, onToggle: (Boolean) -> Unit, onDelete: () -> Unit
 fun QuickAddRow(onAdd: (String, Long?, Int?, Int?) -> Unit, onCancel: () -> Unit) {
     var text by remember { mutableStateOf("") }
     var showTimeOptions by remember { mutableStateOf(false) }
-    
-    // Basic Time Window presets
     var selectedWindow by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-
     Column {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            TextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("New task...") },
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    cursorColor = MaterialTheme.colorScheme.primary
-                ),
-                singleLine = true
-            )
-            IconButton(onClick = { showTimeOptions = !showTimeOptions }) {
-                Icon(
-                    Icons.Default.AccessTime, 
-                    null, 
-                    tint = if (selectedWindow != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                )
-            }
-            IconButton(onClick = { if (text.isNotBlank()) onAdd(text, null, selectedWindow?.first, selectedWindow?.second) }) {
-                Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
-            }
-            IconButton(onClick = onCancel) {
-                Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.outline)
-            }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            TextField(value = text, onValueChange = { text = it }, modifier = Modifier.weight(1f), placeholder = { Text("New task...") }, colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent), singleLine = true)
+            IconButton(onClick = { showTimeOptions = !showTimeOptions }) { Icon(Icons.Default.AccessTime, null, tint = if (selectedWindow != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline) }
+            IconButton(onClick = { if (text.isNotBlank()) onAdd(text, null, selectedWindow?.first, selectedWindow?.second) }) { Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = onCancel) { Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.outline) }
         }
-        
         AnimatedVisibility(visible = showTimeOptions) {
-            Row(
-                modifier = Modifier.padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val windows = listOf(
-                    "Work (9-17)" to (9 to 17),
-                    "Evening (18-22)" to (18 to 22),
-                    "Morning (6-9)" to (6 to 9)
-                )
-                windows.forEach { (label, window) ->
-                    FilterChip(
-                        selected = selectedWindow == window,
-                        onClick = { selectedWindow = if (selectedWindow == window) null else window },
-                        label = { Text(label, style = MaterialTheme.typography.labelSmall) }
-                    )
-                }
+            Row(modifier = Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val windows = listOf("Work (9-17)" to (9 to 17), "Evening (18-22)" to (18 to 22), "Morning (6-9)" to (6 to 9))
+                windows.forEach { (label, window) -> FilterChip(selected = selectedWindow == window, onClick = { selectedWindow = if (selectedWindow == window) null else window }, label = { Text(label, style = MaterialTheme.typography.labelSmall) }) }
             }
         }
     }
@@ -413,59 +363,22 @@ fun QuickAddRow(onAdd: (String, Long?, Int?, Int?) -> Unit, onCancel: () -> Unit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TaskFormDialog(
-    title: String,
-    initialText: String = "",
-    initialWindow: Pair<Int, Int>? = null,
-    fenceName: String, 
-    onDismiss: () -> Unit, 
-    onConfirm: (String, Long?, Int?, Int?) -> Unit
-) {
+fun TaskFormDialog(title: String, initialText: String, initialWindow: Pair<Int, Int>?, fenceName: String, onDismiss: () -> Unit, onConfirm: (String, Long?, Int?, Int?) -> Unit) {
     var text by remember { mutableStateOf(initialText) }
     var selectedWindow by remember { mutableStateOf<Pair<Int, Int>?>(initialWindow) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                Text("For $fenceName", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("What needs to be done?") },
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("Time Window (Optional)", style = MaterialTheme.typography.labelMedium)
-                Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    val windows = listOf(
-                        "9 AM - 5 PM" to (9 to 17),
-                        "6 PM - 10 PM" to (18 to 22),
-                        "6 AM - 9 AM" to (6 to 9)
-                    )
-                    windows.forEach { (label, window) ->
-                        FilterChip(
-                            selected = selectedWindow == window,
-                            onClick = { selectedWindow = if (selectedWindow == window) null else window },
-                            label = { Text(label) },
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                    }
-                }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = {
+        Column {
+            Text("For $fenceName", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("What needs to be done?") }, singleLine = true)
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Time Window", style = MaterialTheme.typography.labelMedium)
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                val windows = listOf("9 AM - 5 PM" to (9 to 17), "6 PM - 10 PM" to (18 to 22), "6 AM - 9 AM" to (6 to 9))
+                windows.forEach { (label, window) -> FilterChip(selected = selectedWindow == window, onClick = { selectedWindow = if (selectedWindow == window) null else window }, label = { Text(label) }, modifier = Modifier.padding(end = 8.dp)) }
             }
-        },
-        confirmButton = {
-            Button(onClick = { if (text.isNotBlank()) onConfirm(text, null, selectedWindow?.first, selectedWindow?.second) }, enabled = text.isNotBlank()) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
-    )
+    }, confirmButton = { Button(onClick = { if (text.isNotBlank()) onConfirm(text, null, selectedWindow?.first, selectedWindow?.second) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
@@ -476,9 +389,7 @@ fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, message: S
             Spacer(modifier = Modifier.height(16.dp))
             Text(message, color = MaterialTheme.colorScheme.outline, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             Spacer(modifier = Modifier.height(24.dp))
-            Button(onClick = onAction) {
-                Text(actionText)
-            }
+            Button(onClick = onAction) { Text(actionText) }
         }
     }
 }

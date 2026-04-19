@@ -49,7 +49,10 @@ object GeofenceRepository {
         synchronized(lock) {
             val index = _tasks.indexOfFirst { it.id == id }
             if (index != -1) {
-                _tasks[index] = _tasks[index].copy(isCompleted = isCompleted)
+                _tasks[index] = _tasks[index].copy(
+                    isCompleted = isCompleted,
+                    completedAt = if (isCompleted) System.currentTimeMillis() else null
+                )
             }
         }
         save(context)
@@ -68,7 +71,7 @@ object GeofenceRepository {
     fun addEvent(context: Context, event: GeofenceEvent) {
         synchronized(lock) {
             _history.add(0, event) // Add to top
-            if (_history.size > 100) _history.removeLast() // Keep last 100
+            if (_history.size > 200) _history.removeLast() // Increased for better storyline
         }
         save(context)
     }
@@ -76,6 +79,12 @@ object GeofenceRepository {
     fun clearHistory(context: Context) {
         synchronized(lock) {
             _history.clear()
+            // Also reset completion timestamps so they disappear from the storyline
+            for (i in _tasks.indices) {
+                if (_tasks[i].completedAt != null) {
+                    _tasks[i] = _tasks[i].copy(completedAt = null)
+                }
+            }
         }
         save(context)
     }
@@ -174,7 +183,8 @@ object GeofenceRepository {
                             timestamp = obj.getLong("time"),
                             dueDate = if (obj.has("dueDate")) obj.getLong("dueDate") else null,
                             startTime = if (obj.has("startTime")) obj.getInt("startTime") else null,
-                            endTime = if (obj.has("endTime")) obj.getInt("endTime") else null
+                            endTime = if (obj.has("endTime")) obj.getInt("endTime") else null,
+                            completedAt = if (obj.has("completedAt")) obj.getLong("completedAt") else null
                         ))
                     }
                 }
@@ -197,7 +207,6 @@ object GeofenceRepository {
     }
 
     fun save(context: Context) {
-        // Deep copy the lists to avoid concurrent modification issues during background save
         val fenceSnapshot = synchronized(lock) { _geofences.toList() }
         val historySnapshot = synchronized(lock) { _history.toList() }
         val taskSnapshot = synchronized(lock) { _tasks.toList() }
@@ -206,7 +215,6 @@ object GeofenceRepository {
             try {
                 val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 
-                // Save Fences
                 val fenceArray = JSONArray()
                 fenceSnapshot.forEach { fence ->
                     fenceArray.put(JSONObject().apply {
@@ -221,7 +229,6 @@ object GeofenceRepository {
                     })
                 }
 
-                // Save History
                 val historyArray = JSONArray()
                 historySnapshot.forEach { event ->
                     historyArray.put(JSONObject().apply {
@@ -232,7 +239,6 @@ object GeofenceRepository {
                     })
                 }
 
-                // Save Tasks
                 val taskArray = JSONArray()
                 taskSnapshot.forEach { task ->
                     taskArray.put(JSONObject().apply {
@@ -244,6 +250,7 @@ object GeofenceRepository {
                         task.dueDate?.let { put("dueDate", it) }
                         task.startTime?.let { put("startTime", it) }
                         task.endTime?.let { put("endTime", it) }
+                        task.completedAt?.let { put("completedAt", it) }
                     })
                 }
 
@@ -294,7 +301,6 @@ object GeofenceRepository {
         }
     }
     
-    // overload for service usage with context
     fun updateGeofenceState(context: Context, id: String, newState: GeofenceState) {
         synchronized(lock) {
             val index = _geofences.indexOfFirst { it.id == id }

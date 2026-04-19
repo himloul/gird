@@ -8,7 +8,8 @@ data class Task(
     val content: String,
     val isCompleted: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-    val dueDate: Long? = null, // Optional deadline or reminder time
-    val startTime: Int? = null, // Start hour (0-23) for time-windowing
-    val endTime: Int? = null    // End hour (0-23) for time-windowing
+    val dueDate: Long? = null,
+    val startTime: Int? = null,
+    val endTime: Int? = null,
+    val completedAt: Long? = null // New: Record when task was actually finished
 )
