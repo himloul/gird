@@ -1,7 +1,11 @@
 package org.foss.gird
 
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "geofences")
 data class Geofence(
-    val id: String,
+    @PrimaryKey val id: String,
     val name: String = "",
     val latitude: Double,
     val longitude: Double,
